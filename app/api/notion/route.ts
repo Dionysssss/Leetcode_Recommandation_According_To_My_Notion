@@ -3,9 +3,7 @@ import {
   fetchAllNotionProblems,
   computeWeakTopics,
   computeDifficultyProfile,
-  DEFAULT_FIELD_MAPPING,
 } from '@/lib/notion'
-import type { FieldMapping } from '@/lib/types'
 
 export const runtime = 'nodejs'
 
@@ -17,7 +15,6 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
   const databaseId: string | undefined = body.databaseId ?? process.env.NOTION_DATABASE_ID
-  const fieldMapping: FieldMapping = body.fieldMapping ?? DEFAULT_FIELD_MAPPING
 
   if (!notionToken || !databaseId) {
     return NextResponse.json(
@@ -27,19 +24,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const problems = await fetchAllNotionProblems(databaseId, notionToken, fieldMapping)
-    const wrongProblems = problems.filter(p => fieldMapping.wrongValues.includes(p.status ?? ''))
-    const weakTopics = computeWeakTopics(problems, fieldMapping.wrongValues)
-    const difficultyProfile = computeDifficultyProfile(problems, fieldMapping.solvedValues)
+    const problems = await fetchAllNotionProblems(databaseId, notionToken)
+    const weakTopics = computeWeakTopics(problems)
+    const difficultyProfile = computeDifficultyProfile(problems)
 
     return NextResponse.json(
       {
         problems,
         stats: {
           total: problems.length,
-          wrong: wrongProblems.length,
-          solved: problems.filter(p => fieldMapping.solvedValues.includes(p.status ?? '')).length,
-          attempted: problems.length - wrongProblems.length,
+          wrong: problems.length,
+          solved: 0,
+          attempted: 0,
           weakTopics,
           difficultyProfile,
         },
