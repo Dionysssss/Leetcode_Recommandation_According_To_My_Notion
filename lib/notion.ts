@@ -5,6 +5,7 @@ import type {
   DifficultyProfile,
   ProblemStatus,
   Difficulty,
+  NotionDatabase,
 } from './types'
 
 function extractTitle(property: any): string {
@@ -50,8 +51,34 @@ function parseNotionPage(page: any): ParsedNotionProblem {
   }
 }
 
-export async function fetchAllNotionProblems(databaseId: string): Promise<ParsedNotionProblem[]> {
-  const notion = new Client({ auth: process.env.NOTION_API_KEY })
+export async function fetchNotionDatabases(authToken: string): Promise<NotionDatabase[]> {
+  const notion = new Client({ auth: authToken })
+  const databases: NotionDatabase[] = []
+  let cursor: string | undefined = undefined
+
+  do {
+    const response = await notion.search({
+      filter: { property: 'object', value: 'database' },
+      start_cursor: cursor,
+      page_size: 100,
+    })
+
+    for (const result of response.results) {
+      if (result.object === 'database') {
+        const db = result as any
+        const name = db.title?.map((t: any) => t.plain_text).join('') || 'Untitled'
+        databases.push({ id: db.id, name, url: db.url ?? '' })
+      }
+    }
+
+    cursor = response.has_more ? (response.next_cursor ?? undefined) : undefined
+  } while (cursor)
+
+  return databases
+}
+
+export async function fetchAllNotionProblems(databaseId: string, authToken?: string): Promise<ParsedNotionProblem[]> {
+  const notion = new Client({ auth: authToken ?? process.env.NOTION_API_KEY })
   const problems: ParsedNotionProblem[] = []
   let cursor: string | undefined = undefined
 

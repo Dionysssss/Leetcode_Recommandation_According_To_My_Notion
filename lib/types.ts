@@ -63,3 +63,16 @@ export interface RecommendResponse {
   weaknessAnalysis: string
   recommendations: Recommendation[]
 }
+
+export interface NotionDatabase {
+  id: string
+  name: string
+  url: string
+}
+
+export interface Credentials {
+  notionToken: string
+  anthropicKey: string
+  databaseId: string
+  databaseName: string
+}

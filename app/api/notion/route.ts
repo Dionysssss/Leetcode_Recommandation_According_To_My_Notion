@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import {
   fetchAllNotionProblems,
   computeWeakTopics,
@@ -7,22 +7,19 @@ import {
 
 export const runtime = 'nodejs'
 
-export async function GET() {
-  const apiKey = process.env.NOTION_API_KEY
-  const databaseId = process.env.NOTION_DATABASE_ID
+export async function GET(req: NextRequest) {
+  const notionToken = req.headers.get('notion-token') ?? process.env.NOTION_API_KEY
+  const databaseId = req.headers.get('notion-database-id') ?? process.env.NOTION_DATABASE_ID
 
-  if (!apiKey || !databaseId) {
+  if (!notionToken || !databaseId) {
     return NextResponse.json(
-      {
-        error:
-          'Missing NOTION_API_KEY or NOTION_DATABASE_ID. Check your .env.local file.',
-      },
+      { error: 'Missing Notion credentials. Please provide your API token and select a database.' },
       { status: 400 }
     )
   }
 
   try {
-    const problems = await fetchAllNotionProblems(databaseId)
+    const problems = await fetchAllNotionProblems(databaseId, notionToken)
     const wrongProblems = problems.filter(p => p.status === 'Wrong')
     const solvedProblems = problems.filter(p => p.status === 'Solved')
     const weakTopics = computeWeakTopics(problems)
@@ -45,16 +42,13 @@ export async function GET() {
   } catch (error: any) {
     if (error?.code === 'unauthorized') {
       return NextResponse.json(
-        { error: 'Invalid Notion API key. Check your NOTION_API_KEY.' },
+        { error: 'Invalid Notion API key.' },
         { status: 401 }
       )
     }
     if (error?.code === 'object_not_found') {
       return NextResponse.json(
-        {
-          error:
-            'Notion database not found. Check your NOTION_DATABASE_ID and ensure the integration has access to the database.',
-        },
+        { error: 'Notion database not found. Ensure the integration has access to the selected database.' },
         { status: 404 }
       )
     }
