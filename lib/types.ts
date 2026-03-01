@@ -7,7 +7,7 @@ export interface ParsedNotionProblem {
   difficulty: Difficulty | null
   topics: string[]
   status: string | null        // single-select value
-  statusTags: string[]         // multi-select values (error category tags)
+  statusTags?: string[]        // multi-select values (error category tags)
   notes: string
   attemptedDate: string | null
   url: string | null
