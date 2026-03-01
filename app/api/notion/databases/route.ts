@@ -4,9 +4,9 @@ import { fetchNotionDatabases } from '@/lib/notion'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
-  const token = req.headers.get('notion-token')
+  const token = req.headers.get('notion-token') ?? req.cookies.get('notion_token')?.value
   if (!token) {
-    return NextResponse.json({ error: 'Missing notion-token header' }, { status: 400 })
+    return NextResponse.json({ error: 'Missing Notion token. Please connect your Notion account.' }, { status: 400 })
   }
 
   try {

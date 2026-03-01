@@ -8,7 +8,10 @@ import {
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
-  const notionToken = req.headers.get('notion-token') ?? process.env.NOTION_API_KEY
+  const notionToken =
+    req.headers.get('notion-token') ??
+    req.cookies.get('notion_token')?.value ??
+    process.env.NOTION_API_KEY
   const databaseId = req.headers.get('notion-database-id') ?? process.env.NOTION_DATABASE_ID
 
   if (!notionToken || !databaseId) {

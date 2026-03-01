@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { LandingPage } from '@/components/LandingPage'
 import { TokenForm } from '@/components/TokenForm'
 import { DatabasePicker } from '@/components/DatabasePicker'
@@ -30,6 +30,45 @@ export default function Home() {
   const [streamText, setStreamText] = useState('')
   const [notionToken, setNotionToken] = useState('')
   const [databaseId, setDatabaseId] = useState('')
+
+  // Handle OAuth return (?connected=true) or OAuth error (?error=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('connected')
+    const error = params.get('error')
+    window.history.replaceState({}, '', window.location.pathname)
+
+    if (error) {
+      const messages: Record<string, string> = {
+        access_denied: 'Notion access was denied. Please try again.',
+        server_config: 'Server misconfiguration. Please contact support.',
+        token_exchange: 'Failed to complete Notion authentication. Please try again.',
+        network: 'Network error during authentication. Please try again.',
+      }
+      setState({ phase: 'error', message: messages[error] ?? `Authentication error: ${error}` })
+      return
+    }
+
+    if (connected === 'true') {
+      // Token stored in cookie — fetch databases without explicit token
+      handleFetchDatabasesFromCookie()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleFetchDatabasesFromCookie = useCallback(async () => {
+    setState({ phase: 'token', isConnecting: true })
+    try {
+      const res = await fetch('/api/notion/databases')
+      const data = await res.json()
+      if (!res.ok) {
+        setState({ phase: 'error', message: data.error ?? 'Failed to load databases' })
+        return
+      }
+      setState({ phase: 'database', databases: data.databases })
+    } catch (err: any) {
+      setState({ phase: 'error', message: err?.message ?? 'Failed to connect to Notion' })
+    }
+  }, [])
 
   // Step 1: user enters token → fetch accessible databases
   const handleConnect = useCallback(async (token: string) => {
