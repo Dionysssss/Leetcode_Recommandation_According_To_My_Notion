@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import type {
   ParsedNotionProblem,
   WeakTopic,
@@ -8,11 +8,11 @@ import type {
 } from './types'
 
 function getClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  return new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 }
 
 function getModel(): string {
-  return process.env.AI_MODEL ?? 'claude-haiku-4-5-20251001'
+  return process.env.AI_MODEL ?? 'gemini-2.0-flash-lite'
 }
 
 function buildAnalysisPrompt(
@@ -21,7 +21,7 @@ function buildAnalysisPrompt(
   profile: DifficultyProfile
 ): string {
   const problemLines = wrongProblems
-    .slice(0, 30) // cap to avoid huge prompts
+    .slice(0, 30)
     .map(
       p =>
         `- ${p.name} (${p.difficulty ?? 'Unknown'}) | Topics: ${p.topics.join(', ') || 'N/A'}\n  Notes: "${p.notes || 'No notes'}"`
@@ -92,44 +92,29 @@ Select exactly 5 problems from the candidates above. Respond ONLY with valid JSO
 }`
 }
 
-export async function analyzeWeaknesses(
-  wrongProblems: ParsedNotionProblem[],
-  weakTopics: WeakTopic[],
-  profile: DifficultyProfile
-): Promise<string> {
-  const client = getClient()
-  const response = await client.messages.create({
-    model: getModel(),
-    max_tokens: 400,
-    system:
-      'You are a senior software engineer and LeetCode coach. Analyze students\' practice history and identify specific patterns in their mistakes. Be specific, honest, and actionable.',
-    messages: [{ role: 'user', content: buildAnalysisPrompt(wrongProblems, weakTopics, profile) }],
-  })
-  const block = response.content[0]
-  return block.type === 'text' ? block.text : ''
-}
+const ANALYSIS_SYSTEM =
+  "You are a senior software engineer and LeetCode coach. Analyze students' practice history and identify specific patterns in their mistakes. Be specific, honest, and actionable."
+
+const RECOMMEND_SYSTEM =
+  'You are a LeetCode practice optimizer. Select the best problems from the candidate list to help a student improve their weaknesses. Only output valid JSON.'
 
 export async function* analyzeWeaknessesStreaming(
   wrongProblems: ParsedNotionProblem[],
   weakTopics: WeakTopic[],
   profile: DifficultyProfile
 ): AsyncGenerator<string> {
-  const client = getClient()
-  const stream = client.messages.stream({
+  const model = getClient().getGenerativeModel({
     model: getModel(),
-    max_tokens: 400,
-    system:
-      'You are a senior software engineer and LeetCode coach. Analyze students\' practice history and identify specific patterns in their mistakes. Be specific, honest, and actionable.',
-    messages: [{ role: 'user', content: buildAnalysisPrompt(wrongProblems, weakTopics, profile) }],
+    systemInstruction: ANALYSIS_SYSTEM,
   })
 
-  for await (const event of stream) {
-    if (
-      event.type === 'content_block_delta' &&
-      event.delta.type === 'text_delta'
-    ) {
-      yield event.delta.text
-    }
+  const result = await model.generateContentStream(
+    buildAnalysisPrompt(wrongProblems, weakTopics, profile)
+  )
+
+  for await (const chunk of result.stream) {
+    const text = chunk.text()
+    if (text) yield text
   }
 }
 
@@ -138,25 +123,17 @@ export async function generateRecommendations(
   weakTopics: WeakTopic[],
   candidates: LeetCodeProblem[]
 ): Promise<ClaudeRecommendation[]> {
-  const client = getClient()
-  const response = await client.messages.create({
+  const model = getClient().getGenerativeModel({
     model: getModel(),
-    max_tokens: 800,
-    system:
-      'You are a LeetCode practice optimizer. Select the best problems from the candidate list to help a student improve their weaknesses. Only output valid JSON.',
-    messages: [
-      {
-        role: 'user',
-        content: buildRecommendPrompt(weaknessAnalysis, weakTopics, candidates),
-      },
-    ],
+    systemInstruction: RECOMMEND_SYSTEM,
   })
 
-  const block = response.content[0]
-  if (block.type !== 'text') return []
+  const result = await model.generateContent(
+    buildRecommendPrompt(weaknessAnalysis, weakTopics, candidates)
+  )
 
-  // Strip any markdown code fences if Claude adds them
-  const cleaned = block.text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+  const text = result.response.text()
+  const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
   const parsed = JSON.parse(cleaned)
   return parsed.recommendations as ClaudeRecommendation[]
 }

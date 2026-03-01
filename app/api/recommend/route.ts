@@ -21,9 +21,9 @@ interface RecommendBody {
 }
 
 export async function POST(req: NextRequest) {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.GEMINI_API_KEY) {
     return new Response(
-      JSON.stringify({ error: 'Missing ANTHROPIC_API_KEY' }),
+      JSON.stringify({ error: 'Missing GEMINI_API_KEY' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     )
   }
