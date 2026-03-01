@@ -4,11 +4,12 @@ import { useState, useCallback, useEffect } from 'react'
 import { LandingPage } from '@/components/LandingPage'
 import { TokenForm } from '@/components/TokenForm'
 import { DatabasePicker } from '@/components/DatabasePicker'
+import { FieldMapper } from '@/components/FieldMapper'
 import { LoadingState } from '@/components/LoadingState'
 import { AnalysisStream } from '@/components/AnalysisStream'
 import { WeakTopicsPanel } from '@/components/WeakTopicsPanel'
 import { RecommendationCard } from '@/components/RecommendationCard'
-import type { Recommendation, NotionStats, NotionDatabase } from '@/lib/types'
+import type { Recommendation, NotionStats, NotionDatabase, DatabaseProperty, FieldMapping } from '@/lib/types'
 
 type LoadingStep = 'notion' | 'analysis' | 'recommendations'
 
@@ -16,6 +17,7 @@ type AppState =
   | { phase: 'landing' }
   | { phase: 'token'; isConnecting: boolean }
   | { phase: 'database'; databases: NotionDatabase[] }
+  | { phase: 'mapping'; db: NotionDatabase; properties: DatabaseProperty[]; isLoading: boolean }
   | { phase: 'loading'; step: LoadingStep }
   | {
       phase: 'results'
@@ -29,9 +31,10 @@ export default function Home() {
   const [state, setState] = useState<AppState>({ phase: 'landing' })
   const [streamText, setStreamText] = useState('')
   const [notionToken, setNotionToken] = useState('')
-  const [databaseId, setDatabaseId] = useState('')
+  // Stored for back-navigation after mapping
+  const [databases, setDatabases] = useState<NotionDatabase[]>([])
 
-  // Handle OAuth return (?connected=true) or OAuth error (?error=...)
+  // Handle OAuth return (?connected=true) or error (?error=...)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const connected = params.get('connected')
@@ -50,7 +53,6 @@ export default function Home() {
     }
 
     if (connected === 'true') {
-      // Token stored in cookie — fetch databases without explicit token
       handleFetchDatabasesFromCookie()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -64,17 +66,16 @@ export default function Home() {
         setState({ phase: 'error', message: data.error ?? 'Failed to load databases' })
         return
       }
+      setDatabases(data.databases)
       setState({ phase: 'database', databases: data.databases })
     } catch (err: any) {
       setState({ phase: 'error', message: err?.message ?? 'Failed to connect to Notion' })
     }
   }, [])
 
-  // Step 1: user enters token → fetch accessible databases
   const handleConnect = useCallback(async (token: string) => {
     setNotionToken(token)
     setState({ phase: 'token', isConnecting: true })
-
     try {
       const res = await fetch('/api/notion/databases', {
         headers: { 'notion-token': token },
@@ -84,25 +85,44 @@ export default function Home() {
         setState({ phase: 'error', message: data.error ?? 'Failed to connect to Notion' })
         return
       }
+      setDatabases(data.databases)
       setState({ phase: 'database', databases: data.databases })
     } catch (err: any) {
       setState({ phase: 'error', message: err?.message ?? 'Failed to connect to Notion' })
     }
   }, [])
 
-  // Step 2: user selects a database → start analysis
-  const handleAnalyze = useCallback(async (db: NotionDatabase) => {
-    setDatabaseId(db.id)
+  // After database selection → fetch schema → show FieldMapper
+  const handleDatabaseSelect = useCallback(async (db: NotionDatabase) => {
+    setState(prev => ({ phase: 'mapping', db, properties: [], isLoading: true }))
+    try {
+      const headers: Record<string, string> = {}
+      if (notionToken) headers['notion-token'] = notionToken
+      const res = await fetch(`/api/notion/schema?databaseId=${encodeURIComponent(db.id)}`, { headers })
+      const data = await res.json()
+      if (!res.ok) {
+        setState({ phase: 'error', message: data.error ?? 'Failed to read database schema' })
+        return
+      }
+      setState({ phase: 'mapping', db, properties: data.properties, isLoading: false })
+    } catch (err: any) {
+      setState({ phase: 'error', message: err?.message ?? 'Failed to read schema' })
+    }
+  }, [notionToken])
+
+  // After FieldMapper confirms → run analysis
+  const handleAnalyze = useCallback(async (db: NotionDatabase, fieldMapping: FieldMapping) => {
     setState({ phase: 'loading', step: 'notion' })
     setStreamText('')
 
     try {
-      // Fetch Notion data
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (notionToken) headers['notion-token'] = notionToken
+
       const notionRes = await fetch('/api/notion', {
-        headers: {
-          'notion-token': notionToken,
-          'notion-database-id': db.id,
-        },
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ databaseId: db.id, fieldMapping }),
       })
       if (!notionRes.ok) {
         const err = await notionRes.json()
@@ -111,20 +131,21 @@ export default function Home() {
       }
       const { problems, stats } = await notionRes.json()
 
-      const wrongProblems = problems.filter((p: any) => p.status === 'Wrong')
+      const wrongProblems = problems.filter((p: any) =>
+        fieldMapping.wrongValues.includes(p.status ?? '')
+      )
       const solvedProblemIds = problems
-        .filter((p: any) => p.status === 'Solved' && p.leetcodeNumber)
+        .filter((p: any) => fieldMapping.solvedValues.includes(p.status ?? '') && p.leetcodeNumber)
         .map((p: any) => p.leetcodeNumber as number)
 
       if (wrongProblems.length === 0) {
         setState({
           phase: 'error',
-          message: 'No problems marked as "Wrong" in your Notion database. Add some problems with Status=Wrong to get recommendations.',
+          message: `No problems found with status "${fieldMapping.wrongValues.join('" or "')}" in your database. Check your field mapping.`,
         })
         return
       }
 
-      // Start SSE stream
       setState({ phase: 'loading', step: 'analysis' })
 
       const res = await fetch('/api/recommend', {
@@ -164,11 +185,7 @@ export default function Home() {
           if (!raw) continue
 
           let event: any
-          try {
-            event = JSON.parse(raw)
-          } catch {
-            continue
-          }
+          try { event = JSON.parse(raw) } catch { continue }
 
           if (event.type === 'phase' && event.phase === 'recommendations') {
             setState({ phase: 'loading', step: 'recommendations' })
@@ -185,16 +202,13 @@ export default function Home() {
         }
       }
 
-      setState({
-        phase: 'results',
-        stats,
-        weaknessAnalysis: finalAnalysis,
-        recommendations: finalRecs,
-      })
+      setState({ phase: 'results', stats, weaknessAnalysis: finalAnalysis, recommendations: finalRecs })
     } catch (err: any) {
       setState({ phase: 'error', message: err?.message ?? 'Unexpected error' })
     }
   }, [notionToken])
+
+  // ── Render ─────────────────────────────────────────────────
 
   if (state.phase === 'landing') {
     return <LandingPage onEnter={() => setState({ phase: 'token', isConnecting: false })} />
@@ -214,8 +228,32 @@ export default function Home() {
     return (
       <DatabasePicker
         databases={state.databases}
-        onSelect={handleAnalyze}
+        onSelect={handleDatabaseSelect}
         onBack={() => setState({ phase: 'token', isConnecting: false })}
+      />
+    )
+  }
+
+  if (state.phase === 'mapping') {
+    if (state.isLoading) {
+      return (
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <svg className="animate-spin w-8 h-8 text-blue-500 mx-auto mb-3" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <p className="text-gray-400 text-sm">Reading database schema...</p>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <FieldMapper
+        db={state.db}
+        properties={state.properties}
+        onConfirm={(fieldMapping) => handleAnalyze(state.db, fieldMapping)}
+        onBack={() => setState({ phase: 'database', databases })}
       />
     )
   }
@@ -246,7 +284,7 @@ export default function Home() {
     )
   }
 
-  // Results page
+  // Results
   return (
     <div className="min-h-screen px-4 py-10">
       <div className="max-w-6xl mx-auto">
@@ -256,12 +294,7 @@ export default function Home() {
             <p className="text-sm text-gray-500 mt-1">Based on {state.stats.wrong} wrong answers in your Notion DB</p>
           </div>
           <button
-            onClick={() => {
-              setState({ phase: 'landing' })
-              setStreamText('')
-              setNotionToken('')
-              setDatabaseId('')
-            }}
+            onClick={() => { setState({ phase: 'landing' }); setStreamText(''); setNotionToken('') }}
             className="text-xs text-gray-500 hover:text-gray-300 transition-colors flex items-center gap-1"
           >
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

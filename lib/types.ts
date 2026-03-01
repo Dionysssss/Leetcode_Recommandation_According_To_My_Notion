@@ -1,5 +1,4 @@
 export type Difficulty = 'Easy' | 'Medium' | 'Hard'
-export type ProblemStatus = 'Solved' | 'Wrong' | 'Attempted' | 'Skipped'
 
 export interface ParsedNotionProblem {
   notionId: string
@@ -7,10 +6,22 @@ export interface ParsedNotionProblem {
   leetcodeNumber: number | null
   difficulty: Difficulty | null
   topics: string[]
-  status: ProblemStatus | null
+  status: string | null   // raw value from Notion — compared against FieldMapping
   notes: string
   attemptedDate: string | null
   url: string | null
+}
+
+export interface DatabaseProperty {
+  name: string
+  type: 'select' | 'status' | 'multi_select'
+  options: string[]
+}
+
+export interface FieldMapping {
+  statusProperty: string   // which Notion property holds the status
+  wrongValues: string[]    // values that mean "wrong / needs practice"
+  solvedValues: string[]   // values that mean "solved / correct"
 }
 
 export interface WeakTopic {
