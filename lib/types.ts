@@ -6,7 +6,8 @@ export interface ParsedNotionProblem {
   leetcodeNumber: number | null
   difficulty: Difficulty | null
   topics: string[]
-  status: string | null   // raw value from Notion — compared against FieldMapping
+  status: string | null        // single-select value
+  statusTags: string[]         // multi-select values (error category tags)
   notes: string
   attemptedDate: string | null
   url: string | null
@@ -14,14 +15,17 @@ export interface ParsedNotionProblem {
 
 export interface DatabaseProperty {
   name: string
-  type: 'select' | 'status' | 'multi_select'
-  options: string[]
+  type: 'select' | 'status' | 'multi_select' | 'rich_text'
+  options: string[]   // empty for rich_text
 }
 
 export interface FieldMapping {
-  statusProperty: string   // which Notion property holds the status
-  wrongValues: string[]    // values that mean "wrong / needs practice"
-  solvedValues: string[]   // values that mean "solved / correct"
+  statusProperty: string
+  wrongValues: string[]
+  solvedValues: string[]
+  allWrong: boolean       // entire table = wrong problems, skip filtering
+  notesProperty: string   // which column has error reason notes
+  topicsProperty: string  // which column has algorithm topics
 }
 
 export interface WeakTopic {

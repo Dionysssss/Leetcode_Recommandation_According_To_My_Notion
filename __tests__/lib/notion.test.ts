@@ -2,108 +2,80 @@ import { describe, it, expect } from 'vitest'
 import { computeWeakTopics, computeDifficultyProfile } from '@/lib/notion'
 import type { ParsedNotionProblem } from '@/lib/types'
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-function makeProblem(
-  overrides: Partial<ParsedNotionProblem> = {}
-): ParsedNotionProblem {
+function makeProblem(overrides: Partial<ParsedNotionProblem> = {}): ParsedNotionProblem {
   return {
-    notionId: 'id-1',
-    name: 'Test Problem',
-    leetcodeNumber: 1,
-    difficulty: 'Easy',
-    topics: [],
-    status: null,
-    notes: '',
-    attemptedDate: null,
-    url: null,
+    notionId: 'id-1', name: 'Test Problem', leetcodeNumber: 1, difficulty: 'Easy',
+    topics: [], status: null, notes: '', attemptedDate: null, url: null,
     ...overrides,
   }
 }
 
 // ── computeWeakTopics ─────────────────────────────────────────────────────────
+// All problems in DB are treated as "wrong"; errorRate is always 1.
 describe('computeWeakTopics', () => {
   it('returns empty array when there are no problems', () => {
     expect(computeWeakTopics([])).toEqual([])
   })
 
   it('returns empty array when problems have no topics', () => {
-    const problems = [
-      makeProblem({ topics: [] }),
-      makeProblem({ topics: [] }),
-    ]
-    expect(computeWeakTopics(problems)).toEqual([])
+    expect(computeWeakTopics([makeProblem({ topics: [] })])).toEqual([])
   })
 
-  it('includes all topics from all problems regardless of status', () => {
+  it('counts every problem that has the topic', () => {
     const problems = [
-      makeProblem({ topics: ['Array', 'Hash Table'], status: null }),
-      makeProblem({ topics: ['Tree'], status: null }),
+      makeProblem({ topics: ['Array'] }),
+      makeProblem({ topics: ['Array'] }),
+      makeProblem({ topics: ['Tree'] }),
     ]
     const result = computeWeakTopics(problems)
-    const topics = result.map(t => t.topic)
-    expect(topics).toContain('Array')
-    expect(topics).toContain('Hash Table')
-    expect(topics).toContain('Tree')
+    expect(result.find(t => t.topic === 'Array')?.wrongCount).toBe(2)
+    expect(result.find(t => t.topic === 'Tree')?.wrongCount).toBe(1)
   })
 
-  it('counts all problems for each topic and sets errorRate to 1', () => {
-    const problems = [
-      makeProblem({ topics: ['Array'] }),
-      makeProblem({ topics: ['Array'] }),
-      makeProblem({ topics: ['Array'] }),
-      makeProblem({ topics: ['Array'] }),
-    ]
-    const result = computeWeakTopics(problems)
-    expect(result).toHaveLength(1)
-    expect(result[0].topic).toBe('Array')
-    expect(result[0].wrongCount).toBe(4)
-    expect(result[0].totalCount).toBe(4)
-    expect(result[0].errorRate).toBe(1)
+  it('errorRate is always 1.0', () => {
+    const [entry] = computeWeakTopics([makeProblem({ topics: ['DP'] })])
+    expect(entry.errorRate).toBe(1)
+    expect(entry.wrongCount).toBe(entry.totalCount)
   })
 
   it('sorts by wrongCount descending', () => {
     const problems = [
+      makeProblem({ topics: ['Tree'] }),
+      makeProblem({ topics: ['DP'] }),
+      makeProblem({ topics: ['DP'] }),
       makeProblem({ topics: ['DP'] }),
       makeProblem({ topics: ['Tree'] }),
-      makeProblem({ topics: ['Tree'] }),
-      makeProblem({ topics: ['String'] }),
-      makeProblem({ topics: ['String'] }),
-      makeProblem({ topics: ['String'] }),
     ]
     const result = computeWeakTopics(problems)
-    expect(result[0].topic).toBe('String')
-    expect(result[1].topic).toBe('Tree')
-    expect(result[2].topic).toBe('DP')
+    expect(result[0].topic).toBe('DP')   // 3
+    expect(result[1].topic).toBe('Tree') // 2
   })
 
   it('a problem with multiple topics contributes to each', () => {
-    const problems = [
-      makeProblem({ topics: ['BFS', 'Graph'] }),
-    ]
-    const result = computeWeakTopics(problems)
-    expect(result.find(t => t.topic === 'BFS')).toBeDefined()
-    expect(result.find(t => t.topic === 'Graph')).toBeDefined()
+    const topics = computeWeakTopics([makeProblem({ topics: ['BFS', 'Graph'] })]).map(t => t.topic)
+    expect(topics).toContain('BFS')
+    expect(topics).toContain('Graph')
   })
 
-  it('ignores problems with no topics', () => {
+  it('counts all problems regardless of status', () => {
     const problems = [
-      makeProblem({ topics: [] }),
+      makeProblem({ topics: ['Array'], status: 'Solved' }),
+      makeProblem({ topics: ['Array'], status: 'Wrong' }),
+      makeProblem({ topics: ['Array'], status: null }),
     ]
-    expect(computeWeakTopics(problems)).toEqual([])
+    expect(computeWeakTopics(problems)[0].wrongCount).toBe(3)
   })
 })
 
 // ── computeDifficultyProfile ──────────────────────────────────────────────────
+// Uses ALL problems (no solved-only filtering).
 describe('computeDifficultyProfile', () => {
   it('returns all zeros when there are no problems', () => {
     expect(computeDifficultyProfile([])).toEqual({ easy: 0, medium: 0, hard: 0 })
   })
 
   it('returns 100/0/0 when all problems are Easy', () => {
-    const problems = [
-      makeProblem({ difficulty: 'Easy' }),
-      makeProblem({ difficulty: 'Easy' }),
-    ]
+    const problems = [makeProblem({ difficulty: 'Easy' }), makeProblem({ difficulty: 'Easy' })]
     expect(computeDifficultyProfile(problems)).toEqual({ easy: 100, medium: 0, hard: 0 })
   })
 
@@ -133,14 +105,21 @@ describe('computeDifficultyProfile', () => {
   })
 
   it('does not crash when difficulty is null', () => {
-    const problems = [
+    const result = computeDifficultyProfile([
       makeProblem({ difficulty: null }),
       makeProblem({ difficulty: 'Easy' }),
-    ]
-    // null difficulty doesn't match any filter → easy: 1/2 = 50%, medium: 0, hard: 0
-    const result = computeDifficultyProfile(problems)
+    ])
     expect(result.easy).toBe(50)
     expect(result.medium).toBe(0)
     expect(result.hard).toBe(0)
+  })
+
+  it('counts all problems regardless of status', () => {
+    const result = computeDifficultyProfile([
+      makeProblem({ difficulty: 'Easy',   status: 'Solved' }),
+      makeProblem({ difficulty: 'Medium', status: 'Wrong' }),
+    ])
+    expect(result.easy).toBe(50)
+    expect(result.medium).toBe(50)
   })
 })

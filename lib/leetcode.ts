@@ -122,3 +122,12 @@ export function getCandidatesByTopics(
 export function getAllProblems(): LeetCodeProblem[] {
   return loadProblems()
 }
+
+// Infer topics by looking up a problem's number in our dataset
+// e.g. "239. Sliding Window Maximum" → looks up id=239 → returns its topics
+export function inferTopicsFromProblemName(name: string): string[] {
+  const match = name.match(/^(\d+)[.\s]/)
+  if (!match) return []
+  const problem = getIdIndex().get(parseInt(match[1]))
+  return problem?.topics ?? []
+}

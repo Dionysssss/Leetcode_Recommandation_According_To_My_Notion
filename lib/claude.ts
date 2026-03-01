@@ -12,7 +12,7 @@ function getClient() {
 }
 
 function getModel(): string {
-  return process.env.AI_MODEL ?? 'gemini-2.0-flash-lite'
+  return process.env.AI_MODEL ?? 'gemini-2.0-flash'
 }
 
 function buildAnalysisPrompt(
@@ -22,38 +22,40 @@ function buildAnalysisPrompt(
 ): string {
   const problemLines = wrongProblems
     .slice(0, 30)
-    .map(
-      p =>
-        `- ${p.name} (${p.difficulty ?? 'Unknown'}) | Topics: ${p.topics.join(', ') || 'N/A'}\n  Notes: "${p.notes || 'No notes'}"`
-    )
+    .map(p => {
+      const errorTags = (p.statusTags ?? [])
+        .filter(t => !['reviewed', 'not reviewed', 'not_reviewed'].includes(t.toLowerCase()))
+      const tagStr = errorTags.length > 0 ? ` | Error type: ${errorTags.join(', ')}` : ''
+      return `- ${p.name} (${p.difficulty ?? 'Unknown'}) | Topics: ${p.topics.join(', ') || 'N/A'}${tagStr}\n  Notes: "${p.notes || 'No notes'}"`
+    })
     .join('\n')
 
-  const topicLines = weakTopics
-    .slice(0, 8)
-    .map(
-      t =>
-        `- ${t.topic}: ${t.wrongCount} wrong / ${t.totalCount} total (${Math.round(t.errorRate * 100)}% error rate)`
-    )
-    .join('\n')
+  const topicLines = weakTopics.length > 0
+    ? weakTopics.slice(0, 8).map(t =>
+        `- ${t.topic}: ${t.wrongCount} problems (${Math.round(t.errorRate * 100)}% error rate)`
+      ).join('\n')
+    : '(topics inferred from problem names)'
 
-  return `Here is a student's LeetCode practice history. Analyze their weak areas.
+  const hasNotes = wrongProblems.some(p => p.notes?.trim())
 
-## Problems They Got Wrong
+  return `This is a student's complete wrong-problems log. Every entry is a problem they got wrong.
+
+## Wrong Problems
 ${problemLines}
 
-## Topic Error Rates
+## Topic Distribution
 ${topicLines}
 
-## Difficulty Profile (solved problems)
+## Difficulty Profile
 - Easy: ${profile.easy}%, Medium: ${profile.medium}%, Hard: ${profile.hard}%
 
 Write a 150-200 word coaching analysis that:
-1. Names the 2-3 most critical weak areas with specific reasoning
-2. Identifies the pattern of mistakes if visible from their notes
-3. Gives one concrete mental model or technique to internalize
-4. Ends with one sentence on what today's practice should focus on
+1. Identifies the 2-3 most common ROOT CAUSES based on the error notes and error type tags
+2. Names the algorithm topics that appear most frequently
+${hasNotes ? '3. References specific patterns you see across multiple problem notes' : '3. Identifies the core algorithm concepts they need to strengthen'}
+4. Ends with one concrete action for today's practice
 
-Be direct and specific. No generic advice.`
+Be direct. Reference actual problem names and notes. No generic advice.`
 }
 
 function buildRecommendPrompt(
