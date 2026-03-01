@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "process-dataset": "tsx scripts/process-leetcode-dataset.ts"
+    "process-dataset": "tsx scripts/process-leetcode-dataset.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.3",

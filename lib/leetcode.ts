@@ -1,4 +1,5 @@
 import type { LeetCodeProblem, Difficulty, WeakTopic } from './types'
+import problemsData from '@/data/leetcode-problems.json'
 
 // Topic alias map — normalizes user's Notion tags to dataset topic names
 const TOPIC_ALIASES: Record<string, string> = {
@@ -45,12 +46,7 @@ let _idIndex: Map<number, LeetCodeProblem> | null = null
 
 function loadProblems(): LeetCodeProblem[] {
   if (_problems) return _problems
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _problems = require('@/data/leetcode-problems.json') as LeetCodeProblem[]
-  } catch {
-    _problems = []
-  }
+  _problems = problemsData as LeetCodeProblem[]
   return _problems
 }
 
