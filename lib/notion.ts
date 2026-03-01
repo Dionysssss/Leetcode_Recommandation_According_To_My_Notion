@@ -6,7 +6,6 @@ import type {
   Difficulty,
   NotionDatabase,
   DatabaseProperty,
-  FieldMapping,
 } from './types'
 
 // ── Extractors ────────────────────────────────────────────────
@@ -56,7 +55,7 @@ function extractTitleFromProps(props: Record<string, any>): string {
 
 // ── Page parser ────────────────────────────────────────────────
 
-function parseNotionPage(page: any, statusProperty: string): ParsedNotionProblem {
+function parseNotionPage(page: any): ParsedNotionProblem {
   const props = page.properties
   return {
     notionId: page.id,
@@ -64,19 +63,11 @@ function parseNotionPage(page: any, statusProperty: string): ParsedNotionProblem
     leetcodeNumber: extractNumber(props['LeetCode Number']),
     difficulty: extractSelect(props['Difficulty']) as Difficulty | null,
     topics: extractMultiSelect(props['Topics']),
-    status: extractStatusValue(props[statusProperty]),
+    status: null,
     notes: extractRichText(props['My Notes']),
     attemptedDate: extractDate(props['Attempted Date']),
     url: extractUrl(props['URL']),
   }
-}
-
-// ── Default field mapping (backwards compat) ──────────────────
-
-export const DEFAULT_FIELD_MAPPING: FieldMapping = {
-  statusProperty: 'Status',
-  wrongValues: ['Wrong'],
-  solvedValues: ['Solved'],
 }
 
 // ── Public API ─────────────────────────────────────────────────
@@ -132,8 +123,7 @@ export async function fetchDatabaseSchema(
 
 export async function fetchAllNotionProblems(
   databaseId: string,
-  authToken?: string,
-  fieldMapping: FieldMapping = DEFAULT_FIELD_MAPPING
+  authToken?: string
 ): Promise<ParsedNotionProblem[]> {
   const notion = new Client({ auth: authToken ?? process.env.NOTION_API_KEY })
   const problems: ParsedNotionProblem[] = []
@@ -146,7 +136,7 @@ export async function fetchAllNotionProblems(
       page_size: 100,
     })
     for (const page of response.results) {
-      problems.push(parseNotionPage(page, fieldMapping.statusProperty))
+      problems.push(parseNotionPage(page))
     }
     cursor = response.has_more ? (response.next_cursor ?? undefined) : undefined
   } while (cursor)
@@ -154,43 +144,33 @@ export async function fetchAllNotionProblems(
   return problems
 }
 
-export function computeWeakTopics(
-  problems: ParsedNotionProblem[],
-  wrongValues: string[] = DEFAULT_FIELD_MAPPING.wrongValues
-): WeakTopic[] {
-  const topicMap = new Map<string, { wrong: number; total: number }>()
+export function computeWeakTopics(problems: ParsedNotionProblem[]): WeakTopic[] {
+  const topicMap = new Map<string, number>()
 
   for (const p of problems) {
     for (const topic of p.topics) {
-      if (!topicMap.has(topic)) topicMap.set(topic, { wrong: 0, total: 0 })
-      const entry = topicMap.get(topic)!
-      entry.total++
-      if (wrongValues.includes(p.status ?? '')) entry.wrong++
+      topicMap.set(topic, (topicMap.get(topic) ?? 0) + 1)
     }
   }
 
   return Array.from(topicMap.entries())
-    .map(([topic, { wrong, total }]) => ({
+    .map(([topic, count]) => ({
       topic,
-      wrongCount: wrong,
-      totalCount: total,
-      errorRate: total > 0 ? wrong / total : 0,
+      wrongCount: count,
+      totalCount: count,
+      errorRate: 1,
     }))
     .filter(t => t.wrongCount > 0)
-    .sort((a, b) => b.wrongCount - a.wrongCount || b.errorRate - a.errorRate)
+    .sort((a, b) => b.wrongCount - a.wrongCount)
 }
 
-export function computeDifficultyProfile(
-  problems: ParsedNotionProblem[],
-  solvedValues: string[] = DEFAULT_FIELD_MAPPING.solvedValues
-): DifficultyProfile {
-  const solvedProblems = problems.filter(p => solvedValues.includes(p.status ?? ''))
-  const total = solvedProblems.length
+export function computeDifficultyProfile(problems: ParsedNotionProblem[]): DifficultyProfile {
+  const total = problems.length
   if (total === 0) return { easy: 0, medium: 0, hard: 0 }
 
-  const easy = solvedProblems.filter(p => p.difficulty === 'Easy').length
-  const medium = solvedProblems.filter(p => p.difficulty === 'Medium').length
-  const hard = solvedProblems.filter(p => p.difficulty === 'Hard').length
+  const easy = problems.filter(p => p.difficulty === 'Easy').length
+  const medium = problems.filter(p => p.difficulty === 'Medium').length
+  const hard = problems.filter(p => p.difficulty === 'Hard').length
 
   return {
     easy: Math.round((easy / total) * 100),

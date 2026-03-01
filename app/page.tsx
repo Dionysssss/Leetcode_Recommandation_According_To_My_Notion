@@ -4,12 +4,11 @@ import { useState, useCallback, useEffect } from 'react'
 import { LandingPage } from '@/components/LandingPage'
 import { TokenForm } from '@/components/TokenForm'
 import { DatabasePicker } from '@/components/DatabasePicker'
-import { FieldMapper } from '@/components/FieldMapper'
 import { LoadingState } from '@/components/LoadingState'
 import { AnalysisStream } from '@/components/AnalysisStream'
 import { WeakTopicsPanel } from '@/components/WeakTopicsPanel'
 import { RecommendationCard } from '@/components/RecommendationCard'
-import type { Recommendation, NotionStats, NotionDatabase, DatabaseProperty, FieldMapping } from '@/lib/types'
+import type { Recommendation, NotionStats, NotionDatabase } from '@/lib/types'
 
 type LoadingStep = 'notion' | 'analysis' | 'recommendations'
 
@@ -17,7 +16,6 @@ type AppState =
   | { phase: 'landing' }
   | { phase: 'token'; isConnecting: boolean }
   | { phase: 'database'; databases: NotionDatabase[] }
-  | { phase: 'mapping'; db: NotionDatabase; properties: DatabaseProperty[]; isLoading: boolean }
   | { phase: 'loading'; step: LoadingStep }
   | {
       phase: 'results'
@@ -31,8 +29,6 @@ export default function Home() {
   const [state, setState] = useState<AppState>({ phase: 'landing' })
   const [streamText, setStreamText] = useState('')
   const [notionToken, setNotionToken] = useState('')
-  // Stored for back-navigation after mapping
-  const [databases, setDatabases] = useState<NotionDatabase[]>([])
 
   // Handle OAuth return (?connected=true) or error (?error=...)
   useEffect(() => {
@@ -66,7 +62,6 @@ export default function Home() {
         setState({ phase: 'error', message: data.error ?? 'Failed to load databases' })
         return
       }
-      setDatabases(data.databases)
       setState({ phase: 'database', databases: data.databases })
     } catch (err: any) {
       setState({ phase: 'error', message: err?.message ?? 'Failed to connect to Notion' })
@@ -85,33 +80,14 @@ export default function Home() {
         setState({ phase: 'error', message: data.error ?? 'Failed to connect to Notion' })
         return
       }
-      setDatabases(data.databases)
       setState({ phase: 'database', databases: data.databases })
     } catch (err: any) {
       setState({ phase: 'error', message: err?.message ?? 'Failed to connect to Notion' })
     }
   }, [])
 
-  // After database selection → fetch schema → show FieldMapper
+  // After database selection → run analysis directly (entire DB = all wrong problems)
   const handleDatabaseSelect = useCallback(async (db: NotionDatabase) => {
-    setState(prev => ({ phase: 'mapping', db, properties: [], isLoading: true }))
-    try {
-      const headers: Record<string, string> = {}
-      if (notionToken) headers['notion-token'] = notionToken
-      const res = await fetch(`/api/notion/schema?databaseId=${encodeURIComponent(db.id)}`, { headers })
-      const data = await res.json()
-      if (!res.ok) {
-        setState({ phase: 'error', message: data.error ?? 'Failed to read database schema' })
-        return
-      }
-      setState({ phase: 'mapping', db, properties: data.properties, isLoading: false })
-    } catch (err: any) {
-      setState({ phase: 'error', message: err?.message ?? 'Failed to read schema' })
-    }
-  }, [notionToken])
-
-  // After FieldMapper confirms → run analysis
-  const handleAnalyze = useCallback(async (db: NotionDatabase, fieldMapping: FieldMapping) => {
     setState({ phase: 'loading', step: 'notion' })
     setStreamText('')
 
@@ -122,7 +98,7 @@ export default function Home() {
       const notionRes = await fetch('/api/notion', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ databaseId: db.id, fieldMapping }),
+        body: JSON.stringify({ databaseId: db.id }),
       })
       if (!notionRes.ok) {
         const err = await notionRes.json()
@@ -131,20 +107,15 @@ export default function Home() {
       }
       const { problems, stats } = await notionRes.json()
 
-      const wrongProblems = problems.filter((p: any) =>
-        fieldMapping.wrongValues.includes(p.status ?? '')
-      )
-      const solvedProblemIds = problems
-        .filter((p: any) => fieldMapping.solvedValues.includes(p.status ?? '') && p.leetcodeNumber)
-        .map((p: any) => p.leetcodeNumber as number)
-
-      if (wrongProblems.length === 0) {
-        setState({
-          phase: 'error',
-          message: `No problems found with status "${fieldMapping.wrongValues.join('" or "')}" in your database. Check your field mapping.`,
-        })
+      if (problems.length === 0) {
+        setState({ phase: 'error', message: 'No problems found in this database.' })
         return
       }
+
+      // All entries in the DB are wrong answers — exclude them from recommendations
+      const solvedProblemIds = problems
+        .filter((p: any) => p.leetcodeNumber)
+        .map((p: any) => p.leetcodeNumber as number)
 
       setState({ phase: 'loading', step: 'analysis' })
 
@@ -153,7 +124,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           weakTopics: stats.weakTopics,
-          wrongProblems,
+          wrongProblems: problems,
           solvedProblemIds,
           difficultyProfile: stats.difficultyProfile,
         }),
@@ -230,30 +201,6 @@ export default function Home() {
         databases={state.databases}
         onSelect={handleDatabaseSelect}
         onBack={() => setState({ phase: 'token', isConnecting: false })}
-      />
-    )
-  }
-
-  if (state.phase === 'mapping') {
-    if (state.isLoading) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="text-center">
-            <svg className="animate-spin w-8 h-8 text-blue-500 mx-auto mb-3" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            <p className="text-gray-400 text-sm">Reading database schema...</p>
-          </div>
-        </div>
-      )
-    }
-    return (
-      <FieldMapper
-        db={state.db}
-        properties={state.properties}
-        onConfirm={(fieldMapping) => handleAnalyze(state.db, fieldMapping)}
-        onBack={() => setState({ phase: 'database', databases })}
       />
     )
   }
