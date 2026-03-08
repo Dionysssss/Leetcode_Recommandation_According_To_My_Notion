@@ -123,6 +123,23 @@ export function getAllProblems(): LeetCodeProblem[] {
   return loadProblems()
 }
 
+// Fallback when no topic data: return a spread across difficulties
+export function getCandidatesByDifficulty(
+  excludeIds: Set<number>,
+  difficultyFilter: Difficulty[],
+  maxCount: number
+): LeetCodeProblem[] {
+  const all = loadProblems().filter(
+    p => !p.isPremium && !excludeIds.has(p.id) && difficultyFilter.includes(p.difficulty)
+  )
+  const byDiff: Record<string, LeetCodeProblem[]> = { Easy: [], Medium: [], Hard: [] }
+  for (const p of all) byDiff[p.difficulty].push(p)
+  const result: LeetCodeProblem[] = []
+  const maxPer = Math.ceil(maxCount / Math.max(difficultyFilter.length, 1))
+  for (const d of difficultyFilter) result.push(...byDiff[d].slice(0, maxPer))
+  return result.slice(0, maxCount)
+}
+
 // Infer topics by looking up a problem's number in our dataset
 // e.g. "239. Sliding Window Maximum" → looks up id=239 → returns its topics
 export function inferTopicsFromProblemName(name: string): string[] {

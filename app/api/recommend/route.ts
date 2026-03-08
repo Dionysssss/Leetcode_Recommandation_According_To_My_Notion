@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server'
 import {
   getCandidatesByTopics,
+  getCandidatesByDifficulty,
   computeDifficultyFilter,
   getProblemById,
+  inferTopicsFromProblemName,
 } from '@/lib/leetcode'
 import {
   analyzeWeaknessesStreaming,
@@ -31,17 +33,34 @@ export async function POST(req: NextRequest) {
   const body: RecommendBody = await req.json()
   const { weakTopics, wrongProblems, solvedProblemIds, difficultyProfile } = body
 
-  if (!weakTopics?.length || !wrongProblems?.length) {
+  if (!wrongProblems?.length) {
     return new Response(
-      JSON.stringify({ error: 'No wrong problems found. Add problems with Status=Wrong to your Notion database.' }),
+      JSON.stringify({ error: 'No problems found in this database.' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     )
   }
 
-  // Pre-filter candidates before calling Claude
   const difficultyFilter = computeDifficultyFilter(difficultyProfile)
   const excludeIds = new Set<number>(solvedProblemIds)
-  const candidates = getCandidatesByTopics(weakTopics.slice(0, 5), excludeIds, difficultyFilter, 50)
+
+  // If no topic tags exist in the DB, infer topics from problem names/numbers
+  let effectiveTopics = weakTopics ?? []
+  if (effectiveTopics.length === 0) {
+    const inferredTopicCounts = new Map<string, number>()
+    for (const p of wrongProblems) {
+      for (const t of inferTopicsFromProblemName(p.name)) {
+        inferredTopicCounts.set(t, (inferredTopicCounts.get(t) ?? 0) + 1)
+      }
+    }
+    effectiveTopics = Array.from(inferredTopicCounts.entries())
+      .map(([topic, count]) => ({ topic, wrongCount: count, totalCount: count, errorRate: 1 }))
+      .sort((a, b) => b.wrongCount - a.wrongCount)
+  }
+
+  // Get candidates: by topic if available, otherwise diverse spread by difficulty
+  const candidates = effectiveTopics.length > 0
+    ? getCandidatesByTopics(effectiveTopics.slice(0, 5), excludeIds, difficultyFilter, 50)
+    : getCandidatesByDifficulty(excludeIds, difficultyFilter, 50)
 
   const encoder = new TextEncoder()
 
@@ -56,14 +75,14 @@ export async function POST(req: NextRequest) {
         send({ type: 'phase', phase: 'analysis' })
         let analysisText = ''
 
-        for await (const chunk of analyzeWeaknessesStreaming(wrongProblems, weakTopics, difficultyProfile)) {
+        for await (const chunk of analyzeWeaknessesStreaming(wrongProblems, effectiveTopics, difficultyProfile)) {
           analysisText += chunk
           send({ type: 'text', text: chunk })
         }
 
         // Phase 2: Structured recommendations
         send({ type: 'phase', phase: 'recommendations' })
-        const claudeRecs = await generateRecommendations(analysisText, weakTopics, candidates)
+        const claudeRecs = await generateRecommendations(analysisText, effectiveTopics, candidates)
 
         const fullRecs = claudeRecs
           .map(rec => ({
