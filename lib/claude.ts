@@ -12,7 +12,7 @@ function getClient() {
 }
 
 function getModel(): string {
-  return process.env.AI_MODEL ?? 'gemini-2.0-flash-lite'
+  return process.env.AI_MODEL ?? 'gemini-2.5-flash-lite'
 }
 
 function buildAnalysisPrompt(
